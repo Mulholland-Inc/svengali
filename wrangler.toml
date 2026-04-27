@@ -1,0 +1,40 @@
+name = "svengali"
+main = "src/app.js"
+account_id = "6c076286f15a83422c0820534c5464e8"
+compatibility_date = "2026-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Stub for the dynamic `import('ai')` inside `agents/mcp` — we don't use it.
+[alias]
+"ai" = "./src/ai-stub.js"
+
+[vars]
+GITHUB_OWNER = "Mulholland-Inc"
+GITHUB_REPO = "site"
+GITHUB_BRANCH = "main"
+
+# OAuth token store for the MCP server.
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "0a50414995ea46dd88907a833c592d06"
+
+# Read-through cache so visitors don't hammer the GitHub API.
+[[kv_namespaces]]
+binding = "SITE_CACHE"
+id = "fd7c262572d04ef790a3b41f9d7e1ccf"
+
+# MCP agent runs in a Durable Object so each MCP session has its own state.
+[[durable_objects.bindings]]
+name = "EDITOR_AGENT"
+class_name = "EditorAgent"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["EditorAgent"]
+
+# Secrets — set via:
+#   wrangler secret put COOKIE_SECRET     # any long random string (HMAC for OAuth state cookies)
+#
+# Everything else (App ID, private key, client secret, installation id) is
+# created by the GitHub App manifest flow and persisted in OAUTH_KV under
+# the `app_config` key. Visit /__setup once after deploy.

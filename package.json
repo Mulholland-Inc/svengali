@@ -1,0 +1,23 @@
+{
+  "name": "@mulholland/svengali",
+  "version": "0.1.0",
+  "description": "Cloudflare Worker that serves the marketing site live from GitHub, lets you click-to-edit when logged in (HMAC cookie), commits edits via the GitHub Git Data API, and exposes an OAuth-gated MCP server on the same password.",
+  "type": "module",
+  "license": "MIT",
+  "main": "./src/app.js",
+  "scripts": {
+    "dev": "wrangler dev --local --persist-to .wrangler/state",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "^0.4.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "agents": "^0.2.14",
+    "hono": "^4.6.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260101.0",
+    "wrangler": "^4.84.0"
+  }
+}
