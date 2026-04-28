@@ -615,7 +615,9 @@ export const EDITOR_CLIENT = `
                 ? 'Saved (' + data.files + ' file' + (data.files === 1 ? '' : 's') + ')'
                 : 'Saved';
             save.textContent = 'Save';
-            setTimeout(function () { count.textContent = '0 edits'; }, 1800);
+            // Reload after a short pause so the user sees the freshly-rendered
+            // server state (newly-added sections, fully-resolved includes).
+            setTimeout(function () { location.reload(); }, 700);
         } catch (e) {
             count.textContent = 'Error';
             save.textContent = 'Save';

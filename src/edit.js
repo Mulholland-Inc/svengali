@@ -23,12 +23,27 @@ import { brandPage, escapeAttr } from './chrome.js'
 // changed" — used for structural ops (add/remove/reorder items).
 const ALLOWED_ATTRS = new Set(['href', 'src', 'alt', 'list'])
 const escapeAttrValue = (s) => String(s).replace(/"/g, '\\"')
+const escapeRegex = (s) => s.replace(/[\\^$*+?.()|[\]{}]/g, '\\$&')
 
 function selectorFor(edit) {
     const key = escapeAttrValue(edit.key)
     if (!edit.attr) return `[data-edit="${key}"]`
     if (edit.attr === 'list') return `[data-edit-list="${key}"]`
     return `[data-edit-${edit.attr}="${key}"]`
+}
+
+// Sections in /_components/sections/*.html may use a {{id}} placeholder
+// instead of the rendered prefix (e.g., `data-edit="{{id}}.title"` becomes
+// `data-edit="stack.title"` after include expansion). For edits to land in
+// these files, we also match the {{id}}-form by replacing the first dotted
+// segment of the key with the literal "{{id}}".
+function paramSelectorFor(edit) {
+    const dotIdx = edit.key.indexOf('.')
+    if (dotIdx <= 0) return null
+    const paramKey = escapeAttrValue('{{id}}' + edit.key.slice(dotIdx))
+    if (!edit.attr) return `[data-edit="${paramKey}"]`
+    if (edit.attr === 'list') return `[data-edit-list="${paramKey}"]`
+    return `[data-edit-${edit.attr}="${paramKey}"]`
 }
 
 class SetInner {
@@ -62,10 +77,13 @@ export async function applyEditsInMemory(env, repoPath, edits, bytes) {
     let rewriter = new HTMLRewriter()
     for (const e of edits) {
         const value = String(e.value ?? '')
+        const param = paramSelectorFor(e)
         if (!e.attr || e.attr === 'list') {
             rewriter = rewriter.on(selectorFor(e), new SetInner(value))
+            if (param) rewriter = rewriter.on(param, new SetInner(value))
         } else {
             rewriter = rewriter.on(selectorFor(e), new SetAttr(e.attr, value))
+            if (param) rewriter = rewriter.on(param, new SetAttr(e.attr, value))
         }
     }
     return new Uint8Array(await rewriter.transform(res).arrayBuffer())
@@ -77,10 +95,16 @@ async function filesContainingKeys(env, edits) {
     const all = await listTree(env)
     const html = all.filter((b) => b.path.endsWith('.html') || b.path.endsWith('.htm'))
     const matches = new Map() // path → bytes (reused later by applyEditsInMemory)
-    const targets = edits.map((e) => {
-        const key = escapeAttrValue(e.key)
+    // For each edit, generate two regexes — the literal key and the
+    // {{id}}-parameterized key — so we match parameterized section files too.
+    const targets = edits.flatMap((e) => {
         const attrName = !e.attr ? 'data-edit' : `data-edit-${e.attr}`
-        return new RegExp(`${attrName}\\s*=\\s*"${key}"`)
+        const literal = new RegExp(`${attrName}\\s*=\\s*"${escapeRegex(escapeAttrValue(e.key))}"`)
+        const dotIdx = e.key.indexOf('.')
+        if (dotIdx <= 0) return [literal]
+        const paramKey = '{{id}}' + e.key.slice(dotIdx)
+        const param = new RegExp(`${attrName}\\s*=\\s*"${escapeRegex(escapeAttrValue(paramKey))}"`)
+        return [literal, param]
     })
     await Promise.all(
         html.map(async (b) => {
