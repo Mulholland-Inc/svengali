@@ -17,9 +17,19 @@ import {
     patchAppConfig,
     listTree,
 } from './github.js'
+import { brandPage, escapeAttr } from './chrome.js'
 
-const ALLOWED_ATTRS = new Set(['href', 'src', 'alt'])
+// 'list' is a pseudo-attribute that means "this whole list/section's innerHTML
+// changed" — used for structural ops (add/remove/reorder items).
+const ALLOWED_ATTRS = new Set(['href', 'src', 'alt', 'list'])
 const escapeAttrValue = (s) => String(s).replace(/"/g, '\\"')
+
+function selectorFor(edit) {
+    const key = escapeAttrValue(edit.key)
+    if (!edit.attr) return `[data-edit="${key}"]`
+    if (edit.attr === 'list') return `[data-edit-list="${key}"]`
+    return `[data-edit-${edit.attr}="${key}"]`
+}
 
 class SetInner {
     constructor(html) {
@@ -50,14 +60,11 @@ export async function applyEditsInMemory(env, repoPath, edits) {
     const res = new Response(bytes, { headers: { 'content-type': 'text/html; charset=utf-8' } })
     let rewriter = new HTMLRewriter()
     for (const e of edits) {
-        const key = escapeAttrValue(e.key)
-        if (!e.attr) {
-            rewriter = rewriter.on(`[data-edit="${key}"]`, new SetInner(String(e.value ?? '')))
+        const value = String(e.value ?? '')
+        if (!e.attr || e.attr === 'list') {
+            rewriter = rewriter.on(selectorFor(e), new SetInner(value))
         } else {
-            rewriter = rewriter.on(
-                `[data-edit-${e.attr}="${key}"]`,
-                new SetAttr(e.attr, String(e.value ?? '')),
-            )
+            rewriter = rewriter.on(selectorFor(e), new SetAttr(e.attr, value))
         }
     }
     return new Uint8Array(await rewriter.transform(res).arrayBuffer())
@@ -71,9 +78,8 @@ async function filesContainingKeys(env, edits) {
     const matches = new Set()
     const targets = edits.map((e) => {
         const key = escapeAttrValue(e.key)
-        return e.attr
-            ? new RegExp(`data-edit-${e.attr}\\s*=\\s*"${key}"`)
-            : new RegExp(`data-edit\\s*=\\s*"${key}"`)
+        const attrName = !e.attr ? 'data-edit' : `data-edit-${e.attr}`
+        return new RegExp(`${attrName}\\s*=\\s*"${key}"`)
     })
     await Promise.all(
         html.map(async (path) => {
@@ -147,6 +153,53 @@ export function mountEditRoutes(app) {
         return new Response(null, { status: 302, headers })
     })
 
+    // Fetch a component template from `_components/`, with `{{id}}` placeholders
+    // replaced by a random short id so newly-inserted items get unique
+    // data-edit keys. Used by the editor when adding items / sections.
+    app.get('/__edit/template', async (c) => {
+        const session = await getSession(c.req.raw, c.env)
+        if (!session) return c.text('Unauthorized', 401)
+        const path = String(c.req.query('path') ?? '')
+        if (!path.startsWith('/_components/') || !path.endsWith('.html') || path.includes('..')) {
+            return c.text('Bad path', 400)
+        }
+        const repoPath = path.slice(1)
+        const bytes = await readFile(c.env, repoPath)
+        if (!bytes) return c.text('Template not found', 404)
+        const id = `it_${Math.random().toString(36).slice(2, 8)}`
+        const html = new TextDecoder().decode(bytes).replace(/\{\{id\}\}/g, id)
+        return c.json({ html, id })
+    })
+
+    // Upload a binary asset to the repo (commits to /assets/ by default).
+    app.post('/__edit/upload', async (c) => {
+        const session = await getSession(c.req.raw, c.env)
+        if (!session) return c.text('Unauthorized', 401)
+        let form
+        try {
+            form = await c.req.formData()
+        } catch {
+            return c.text('Bad form', 400)
+        }
+        const file = form.get('file')
+        if (!file || typeof file === 'string') return c.text('Missing file', 400)
+        const dir = String(form.get('dir') || 'assets').replace(/^\/+|\/+$/g, '') || 'assets'
+        const path = `${dir}/${slugifyFilename(file.name)}`
+        const bytes = new Uint8Array(await file.arrayBuffer())
+        if (!bytes.byteLength) return c.text('Empty file', 400)
+        try {
+            const result = await commitFiles(
+                c.env,
+                [{ path, bytes }],
+                `upload ${path} (${bytes.byteLength}B)`,
+                session.accessToken,
+            )
+            return c.json({ ok: true, path: `/${path}`, bytes: bytes.byteLength, ...result })
+        } catch (err) {
+            return c.text(String(err?.message ?? err), 500)
+        }
+    })
+
     app.post('/__edit/logout', async (c) => {
         const id = readSessionId(c.req.raw)
         await deleteSession(c.env, id)
@@ -212,21 +265,30 @@ export function mountEditRoutes(app) {
     })
 }
 
+function slugifyFilename(name) {
+    const dot = name.lastIndexOf('.')
+    const base = dot >= 0 ? name.slice(0, dot) : name
+    const ext = dot >= 0 ? name.slice(dot).toLowerCase() : ''
+    const cleaned = base
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'file'
+    return cleaned + ext
+}
+
 function setupNeededPage() {
-    return `<!doctype html><html><head><meta charset="utf-8"><title>Setup needed</title>
-<style>body{font-family:-apple-system,system-ui,sans-serif;padding:60px;color:#1e2124;line-height:1.5;max-width:480px;margin:0 auto}
-a{color:#1e2124}</style></head><body>
-<h1>Setup needed</h1>
-<p>Svengali isn't configured yet. Visit <a href="/__setup">/__setup</a> to register the GitHub App.</p>
-</body></html>`
+    return brandPage(
+        'Setup needed',
+        `<h1>Setup needed</h1>
+<p>Svengali isn't configured yet. Register the GitHub App to start.</p>
+<div class="actions"><a class="btn" href="/__setup">Open setup →</a></div>`,
+    )
 }
 
 function noAccessPage(owner, repo) {
-    return `<!doctype html><html><head><meta charset="utf-8"><title>No access</title>
-<style>body{font-family:-apple-system,system-ui,sans-serif;padding:60px;color:#1e2124;line-height:1.5;max-width:480px;margin:0 auto}
-code{font-family:ui-monospace,Menlo,monospace;background:#f3f4f6;padding:2px 6px;border-radius:4px}</style></head><body>
-<h1>No push access</h1>
-<p>Your GitHub account doesn't have push access to <code>${owner}/${repo}</code>.
-Ask the owner to add you as a collaborator and try again.</p>
-</body></html>`
+    return brandPage(
+        'No push access',
+        `<h1>No push access</h1>
+<p>Your GitHub account doesn't have push access to <code>${escapeAttr(owner)}/${escapeAttr(repo)}</code>. Ask the owner to add you as a collaborator and try again.</p>`,
+    )
 }

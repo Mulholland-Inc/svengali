@@ -21,14 +21,7 @@ import {
     patchAppConfig,
     putAppConfig,
 } from './github.js'
-
-const escapeAttr = (s) =>
-    String(s ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;')
+import { brandPage, escapeAttr } from './chrome.js'
 
 function buildManifest(env, origin) {
     return {
@@ -52,7 +45,7 @@ export function mountSetupRoutes(app) {
 
         if (cfg?.installationId) {
             return c.html(
-                page(
+                brandPage(
                     'Already configured',
                     `<h1>Already configured</h1>
 <p>Svengali is set up and installed. <a href="/__login">Sign in</a> to start editing.</p>
@@ -66,7 +59,7 @@ export function mountSetupRoutes(app) {
 
         if (cfg?.appId && !cfg?.installationId) {
             return c.html(
-                page(
+                brandPage(
                     'Install the App',
                     `<h1>App created</h1>
 <p>Now install <strong>${escapeAttr(cfg.slug)}</strong> on the
@@ -98,7 +91,7 @@ and bounces you back here.</p>
 
     app.get('/__setup/callback', async (c) => {
         const code = c.req.query('code')
-        if (!code) return c.html(page('Setup error', `<h1>Missing code</h1>`), 400)
+        if (!code) return c.html(brandPage('Setup error', `<h1>Missing code</h1><p>GitHub didn't return a setup code. Try <a href="/__setup">/__setup</a> again.</p>`), 400)
         try {
             const conv = await convertManifest(code)
             const config = {
@@ -116,7 +109,7 @@ and bounces you back here.</p>
             await putAppConfig(c.env, config)
         } catch (e) {
             return c.html(
-                page('Setup error', `<h1>Conversion failed</h1><pre>${escapeAttr(e.message)}</pre>`),
+                brandPage('Setup error', `<h1>Conversion failed</h1><pre>${escapeAttr(e.message)}</pre>`),
                 500,
             )
         }
@@ -130,7 +123,7 @@ and bounces you back here.</p>
             if (!id) id = await findInstallationId(c.env, c.env.GITHUB_OWNER)
             if (!id) {
                 return c.html(
-                    page(
+                    brandPage(
                         'Setup error',
                         `<h1>Couldn't find the installation</h1>
 <p>The App is created but doesn't appear to be installed on
@@ -143,7 +136,7 @@ and bounces you back here.</p>
             await patchAppConfig(c.env, { installationId: Number(id) })
         } catch (e) {
             return c.html(
-                page('Setup error', `<h1>Install lookup failed</h1><pre>${escapeAttr(e.message)}</pre>`),
+                brandPage('Setup error', `<h1>Install lookup failed</h1><pre>${escapeAttr(e.message)}</pre>`),
                 500,
             )
         }
@@ -157,24 +150,3 @@ and bounces you back here.</p>
     })
 }
 
-function page(title, body) {
-    return `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeAttr(title)} · Svengali</title>
-<style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,system-ui,"SF Pro Display",sans-serif;font-size:16px;
-  color:#1e2124;background:#fff;display:grid;place-items:center;min-height:100vh;padding:24px;line-height:1.5}
-main{width:min(520px,100%)}
-h1{font-size:28px;font-weight:500;letter-spacing:-0.02em;margin-bottom:18px}
-p{color:#5a5d63;margin-bottom:14px}
-code{font-family:ui-monospace,Menlo,monospace;font-size:14px;color:#1e2124;background:#f3f4f6;padding:2px 6px;border-radius:4px}
-.btn,a.btn{display:inline-block;background:#1e2124;color:#fff;text-decoration:none;
-  border:0;border-radius:999px;padding:12px 22px;font:inherit;font-weight:500;cursor:pointer}
-.btn:hover{opacity:0.85}
-details{font-size:14px;color:#9a9a9a}
-details summary{cursor:pointer}
-details button{font:inherit;font-size:14px;background:transparent;color:#b91c1c;border:1px solid #e5e7eb;border-radius:8px;padding:6px 10px;cursor:pointer}
-pre{font-family:ui-monospace,Menlo,monospace;font-size:13px;background:#f3f4f6;padding:12px;border-radius:6px;overflow:auto}
-</style></head><body><main>${body}</main></body></html>`
-}

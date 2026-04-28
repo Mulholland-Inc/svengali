@@ -98,8 +98,9 @@ class EditorInjector {
 export async function serveSite(req, env) {
     const url = new URL(req.url)
 
-    // Hide chrome partials — they're for include resolution, not direct viewing.
-    if (url.pathname.startsWith('/_chrome/') || url.pathname.startsWith('/_chrome')) {
+    // Hide chrome and component partials from direct viewing — they're
+    // pulled in via <include> or the template endpoint, not standalone pages.
+    if (url.pathname.startsWith('/_chrome/') || url.pathname.startsWith('/_components/')) {
         return new Response('Not found', { status: 404 })
     }
 
