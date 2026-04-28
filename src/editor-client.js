@@ -248,15 +248,24 @@ export const EDITOR_CLIENT = `
                         });
                     })(list, item);
                 }
-                listTemplates(list).forEach(function (t) {
+                var itemTpls = listTemplates(list);
+                if (itemTpls.length === 1) {
                     (function (l, i, tpl) {
                         out.push({
                             label: tpl.label + ' below',
                             sub: listKey,
                             run: function () { addItem(l, 'after', i, tpl.path); },
                         });
-                    })(list, item, t);
-                });
+                    })(list, item, itemTpls[0]);
+                } else if (itemTpls.length > 1) {
+                    (function (l, i, tpls) {
+                        out.push({
+                            label: 'Insert below…',
+                            sub: listKey,
+                            run: function () { showPicker(l, 'after', i, tpls); },
+                        });
+                    })(list, item, itemTpls);
+                }
                 (function (l, i) {
                     out.push({
                         label: 'Remove',
@@ -268,15 +277,23 @@ export const EDITOR_CLIENT = `
             } else {
                 var tpls = listTemplates(list);
                 if (tpls.length && out.length) out.push({ divider: true });
-                tpls.forEach(function (t) {
+                if (tpls.length === 1) {
                     (function (l, tpl) {
                         out.push({
                             label: tpl.label,
                             sub: listKey,
                             run: function () { addItem(l, 'end', null, tpl.path); },
                         });
-                    })(list, t);
-                });
+                    })(list, tpls[0]);
+                } else if (tpls.length > 1) {
+                    (function (l, all) {
+                        out.push({
+                            label: 'Add section…',
+                            sub: listKey,
+                            run: function () { showPicker(l, 'end', null, all); },
+                        });
+                    })(list, tpls);
+                }
             }
         }
 
@@ -330,6 +347,77 @@ export const EDITOR_CLIENT = `
 
     var menu = null;
     function closeMenu() { if (menu) { menu.remove(); menu = null; } }
+
+    var picker = null;
+    function closePicker() { if (picker) { picker.remove(); picker = null; } }
+
+    // Centered modal for picking from many templates. Used when a list has
+    // more than one template — keeps the right-click menu compact.
+    function showPicker(list, position, refItem, templates) {
+        closePicker();
+        picker = document.createElement('div');
+        picker.id = '__edit-picker';
+        var backdrop = document.createElement('div');
+        backdrop.className = '__edit-picker-backdrop';
+        backdrop.addEventListener('click', closePicker);
+        picker.appendChild(backdrop);
+
+        var card = document.createElement('div');
+        card.className = '__edit-picker-card';
+        var header = document.createElement('header');
+        header.textContent = position === 'after' ? 'Insert below' : 'Add section';
+        card.appendChild(header);
+
+        var input = document.createElement('input');
+        input.type = 'search';
+        input.placeholder = 'Filter…';
+        input.autocomplete = 'off';
+        input.spellcheck = false;
+        card.appendChild(input);
+
+        var listEl = document.createElement('div');
+        listEl.className = '__edit-picker-list';
+        templates.forEach(function (t) {
+            var row = document.createElement('button');
+            row.type = 'button';
+            row.dataset.label = (t.label || '').toLowerCase();
+            row.dataset.path = (t.path || '').toLowerCase();
+            var label = document.createElement('span');
+            label.textContent = t.label;
+            var path = document.createElement('em');
+            path.textContent = t.path;
+            row.appendChild(label);
+            row.appendChild(path);
+            row.addEventListener('click', function () {
+                closePicker();
+                addItem(list, position, refItem, t.path);
+            });
+            listEl.appendChild(row);
+        });
+        card.appendChild(listEl);
+
+        input.addEventListener('input', function () {
+            var q = input.value.trim().toLowerCase();
+            listEl.querySelectorAll('button').forEach(function (b) {
+                var match = !q || b.dataset.label.indexOf(q) >= 0 || b.dataset.path.indexOf(q) >= 0;
+                b.style.display = match ? '' : 'none';
+            });
+        });
+        input.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') closePicker();
+            if (e.key === 'Enter') {
+                var first = listEl.querySelector('button:not([style*="display: none"])');
+                if (first) first.click();
+            }
+        });
+
+        picker.appendChild(card);
+        document.body.appendChild(picker);
+        setTimeout(function () { input.focus(); }, 0);
+    }
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && picker) closePicker();
+    });
 
     document.addEventListener('contextmenu', function (e) {
         var opts = collectOptions(e.target);
@@ -461,6 +549,41 @@ export const EDITOR_CLIENT = `
         '#__edit-menu button.danger:hover{background:#fff;color:#fff;background-color:#b91c1c}',
         '#__edit-menu button.danger:hover em{color:rgba(255,255,255,0.7)}',
         '#__edit-menu hr{display:none}', // we use border-bottom on each row instead
+
+        // Centered modal picker for "Add section" with many options.
+        '#__edit-picker{position:fixed;inset:0;z-index:100001;display:flex;align-items:center;justify-content:center;padding:var(--space-5,24px)}',
+        '#__edit-picker .__edit-picker-backdrop{position:absolute;inset:0;background:rgba(26,26,26,0.32)}',
+        '#__edit-picker .__edit-picker-card{position:relative;background:#fff;color:var(--color-fg,#1a1a1a);',
+        '  border:1px solid var(--color-line,rgba(160,160,160,0.5));',
+        '  width:min(520px,100%);max-height:min(560px,80vh);',
+        '  display:flex;flex-direction:column;font-family:var(--font-body,system-ui,sans-serif)}',
+        '#__edit-picker header{padding:var(--space-4,16px) var(--space-4,16px) var(--space-3,12px);',
+        '  border-bottom:1px solid var(--color-line,rgba(160,160,160,0.5));',
+        '  font-family:var(--font-mono,ui-monospace,Menlo,monospace);',
+        '  font-style:italic;font-size:var(--text-sm,13px);color:var(--color-muted,#a0a0a0);',
+        '  text-transform:uppercase;letter-spacing:0.04em}',
+        '#__edit-picker input[type=search]{',
+        '  appearance:none;-webkit-appearance:none;',
+        '  width:100%;border:0;border-bottom:1px solid var(--color-line,rgba(160,160,160,0.5));',
+        '  padding:var(--space-3,12px) var(--space-4,16px);background:transparent;',
+        '  font:inherit;font-size:var(--text-base,15px);color:var(--color-fg,#1a1a1a);',
+        '  outline:0}',
+        '#__edit-picker input[type=search]::placeholder{color:var(--color-muted,#a0a0a0)}',
+        '#__edit-picker input[type=search]:focus{border-bottom-color:var(--color-accent,#2244ff)}',
+        '#__edit-picker .__edit-picker-list{overflow-y:auto;flex:1;min-height:0}',
+        '#__edit-picker .__edit-picker-list button{',
+        '  display:flex;align-items:baseline;gap:var(--space-3,12px);',
+        '  width:100%;padding:var(--space-3,12px) var(--space-4,16px);',
+        '  border:0;border-bottom:1px solid var(--color-line,rgba(160,160,160,0.5));',
+        '  background:transparent;color:var(--color-fg,#1a1a1a);text-align:left;',
+        '  font:inherit;font-size:var(--text-sm,13px);cursor:pointer;',
+        '  transition:background 80ms var(--easing,ease)}',
+        '#__edit-picker .__edit-picker-list button:last-child{border-bottom:0}',
+        '#__edit-picker .__edit-picker-list button:hover{background:var(--color-bg,#ebebeb)}',
+        '#__edit-picker .__edit-picker-list button em{',
+        '  font-style:italic;color:var(--color-muted,#a0a0a0);',
+        '  font-family:var(--font-mono,ui-monospace,Menlo,monospace);',
+        '  font-size:var(--text-sm,13px);margin-left:auto;text-align:right}',
     ].join('\\n');
     document.head.appendChild(style);
     document.body.appendChild(bar);
