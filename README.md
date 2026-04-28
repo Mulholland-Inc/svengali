@@ -1,72 +1,65 @@
 # Svengali
 
-Cloudflare Worker that serves the marketing site live from GitHub, lets you click-to-edit when logged in, and exposes the same edit primitives over MCP.
+Cloudflare Worker that serves the marketing site live from GitHub, expands `<include>` partials, and lets logged-in editors right-click to edit text/links/images. Every save is a real commit on `main`, attributed to the editor's GitHub identity.
 
 ```
-visitor  ──▶  Worker  ──▶  raw.githubusercontent.com   (cached 60s in KV)
-                  │
-editor   ──▶  Worker  ──▶  GitHub Git Data API         (1 atomic commit per save)
-MCP      ──▶  Worker  ──▶  GitHub Git Data API         (same path, OAuth-gated)
+visitor  ──▶  Worker ──▶ raw.githubusercontent.com   (cached 60s in KV)
+                │
+editor   ──▶  Worker ──▶ GitHub Git Data API         (1 atomic commit per save)
 ```
 
-- **Source of truth**: `Mulholland-Inc/site` on GitHub. No R2, no DB, no JSON sidecar — every edit is a real commit on `main`.
-- **Auth**: one shared `EDIT_PASSWORD`. Browser editor → HMAC-signed `__edit` cookie. MCP → standard OAuth flow that lands on the same password prompt.
-- **Edit model**: sprinkle `data-edit="some.key"` on any element you want editable; the editor flips it to `contenteditable` for authed users and POSTs the new HTML to `/__edit/save`, which uses HTMLRewriter to swap the inner content of `[data-edit="some.key"]` and commits the file.
+- **Source of truth**: `Mulholland-Inc/site` on GitHub. No R2, no DB — every edit is a commit.
+- **Auth**: GitHub App. Bot reads via installation token; user-to-server OAuth gates writes. Push-access on the configured repo is the only access check.
+- **Components**: `<include src="/_chrome/nav.html"></include>` is replaced server-side, recursively, before the editor injects its overlay. Edit a nav element on any page → cross-page sync writes to `_chrome/nav.html` once.
+- **Edit model**:
+  ```html
+  <h1 data-edit="hero.title">…</h1>           <!-- right-click → Edit text -->
+  <a  data-edit-href="cta.url" href="…">…    <!-- right-click → Edit href -->
+  <img data-edit-src="hero.image" src="…">   <!-- right-click → Edit src -->
+  <img data-edit-alt="hero.alt" alt="…">     <!-- right-click → Edit alt -->
+  ```
 
 ## Setup
 
-1. **PAT** — create a fine-grained personal access token at <https://github.com/settings/tokens?type=beta>, scoped to `Mulholland-Inc/site` only, with `Contents: read & write` and `Metadata: read`.
-
-2. **KV namespaces**
+1. **KV namespaces** — create once, paste ids into `wrangler.toml`:
    ```
-   wrangler kv:namespace create OAUTH_KV
-   wrangler kv:namespace create SITE_CACHE
+   wrangler kv namespace create OAUTH_KV
+   wrangler kv namespace create SITE_CACHE
    ```
-   Paste the returned ids into `wrangler.toml`.
-
-3. **Secrets**
+2. **Secret**:
    ```
-   wrangler secret put EDIT_PASSWORD     # shared password for editor + MCP
-   wrangler secret put COOKIE_SECRET     # any long random string (e.g. `openssl rand -hex 32`)
-   wrangler secret put GITHUB_TOKEN      # the PAT from step 1
+   wrangler secret put COOKIE_SECRET     # `openssl rand -hex 32`
    ```
-
-4. **Deploy**
+3. **Deploy**:
    ```
    npm install
    wrangler deploy
    ```
+4. **Register the GitHub App** — visit `https://<worker>/__setup` and click through twice:
+   - "Create GitHub App from manifest" → GitHub creates an App scoped to `Contents: read/write` + `Metadata: read` on `Mulholland-Inc`. Worker captures the credentials.
+   - "Install on Mulholland-Inc" → grant access to `Mulholland-Inc/site`. Worker captures `installation_id` and bounces you to `/__login`.
 
-## Editing the site
+After that, anyone with push access to the repo can sign in at `/__login` and edit.
 
-1. Add `data-edit="<unique-key>"` to any element in `Mulholland-Inc/site` whose text you want editable. Pick a stable, descriptive key — that's the contract:
+## Editing
+
+1. Tag any element you want editable (or any link/image attribute):
    ```html
    <h1 data-edit="hero.title">Run every surface from one model.</h1>
-   <p  data-edit="hero.subtitle">Acts on the model when trusted.</p>
+   <a data-edit-href="cta.url" href="/signup">Get started</a>
    ```
-2. Visit the deployed Worker, hit `/__login`, enter the password.
-3. Edit any `[data-edit]` element directly. Hit **Save**. One GitHub commit per save.
-
-## MCP
-
-Point an MCP client (Claude Desktop, etc.) at `https://<worker>/mcp`. It will redirect to `/authorize`, prompt for the same password, and issue a bearer token.
-
-Tools:
-- `list_files()` — every HTML file in the repo
-- `list_keys(path)` — every `data-edit` key on a page
-- `get_value(path, key)` — current inner text of one key
-- `set_value(path, key, html)` — replace inner HTML of one key and commit
+2. Visit `/__login`, sign in via GitHub.
+3. Right-click any tagged element → pick the action → enter the value → hit **Save**. Same key on multiple pages = one commit, all pages updated.
 
 ## Files
 
 ```
 src/
-  app.js            OAuthProvider wrapper + entry
-  site.js           Read-through GitHub serving, editor injection on auth
-  edit.js           /__login, /__edit/save (cookie auth → atomic commit)
-  oauth.js          /authorize password page (same password, MCP grant)
-  agent.js          McpAgent — list_files/list_keys/get_value/set_value
-  github.js         Thin GitHub client (raw read + Git Data API write)
-  editor-client.js  Inlined click-to-edit script
-  util.js           HMAC cookie helpers
+  app.js            entry — Hono router
+  site.js           serve from GitHub, expand <include>, inject editor on auth
+  edit.js           /__login, /__edit/callback, /__edit/save (cookie session → commit)
+  setup.js          /__setup — one-time GitHub App manifest + install
+  github.js         GitHub client (App JWT, OAuth, raw reads, Git Data API)
+  editor-client.js  inlined right-click overlay (text + attribute edits, save bar)
+  util.js           sessions in KV, signed OAuth state
 ```

@@ -111,18 +111,20 @@ export function mountEditRoutes(app) {
         const installationId = c.req.query('installation_id')
         if (!code) return c.text('Missing code', 400)
 
-        // Post-install flow (manifest had `request_oauth_on_install: true`).
-        // GitHub combines installation completion with an OAuth grant, so we
-        // get `code` + `installation_id` but no `state`. Capture the install
-        // id into app_config and sign the user in.
-        let decoded
+        // Post-install flow (manifest had `request_oauth_on_install: true`):
+        // GitHub combines install completion with an OAuth grant, so we get
+        // code + installation_id but no signed state. Capture the install id
+        // into app_config; otherwise verify the signed state we minted.
+        let next = '/'
         if (installationId && !state) {
             await patchAppConfig(c.env, { installationId: Number(installationId) })
-            decoded = { kind: 'browser', next: '/' }
         } else {
             if (!state) return c.text('Missing state', 400)
-            decoded = await verifyState(c.env.COOKIE_SECRET, state)
+            const decoded = await verifyState(c.env.COOKIE_SECRET, state)
             if (!decoded) return c.text('Bad or expired state', 400)
+            if (typeof decoded.next === 'string' && decoded.next.startsWith('/')) {
+                next = decoded.next
+            }
         }
 
         let token
@@ -135,32 +137,12 @@ export function mountEditRoutes(app) {
 
         const access = await checkRepoPushAccess(c.env, token)
         if (!access.ok) {
-            return c.html(
-                noAccessPage(c.env.GITHUB_OWNER, c.env.GITHUB_REPO),
-                403,
-            )
+            return c.html(noAccessPage(c.env.GITHUB_OWNER, c.env.GITHUB_REPO), 403)
         }
 
-        if (decoded.kind === 'mcp') {
-            const provider = c.env.OAUTH_PROVIDER
-            if (!provider) return c.text('OAuth provider missing', 500)
-            const { redirectTo } = await provider.completeAuthorization({
-                request: decoded.oauthReq,
-                userId: access.login,
-                metadata: { login: access.login },
-                scope: decoded.oauthReq?.scope ?? ['mcp'],
-                props: { login: access.login, accessToken: token },
-            })
-            return Response.redirect(redirectTo, 302)
-        }
-
-        // Browser flow → mint a session and bounce back to wherever they were.
         const sessionId = await createSession(c.env, { login: access.login, accessToken: token })
         const headers = new Headers()
         headers.set('set-cookie', setSessionCookie(sessionId))
-        const next = typeof decoded.next === 'string' && decoded.next.startsWith('/')
-            ? decoded.next
-            : '/'
         headers.set('location', next)
         return new Response(null, { status: 302, headers })
     })
