@@ -26,6 +26,13 @@ const CONTENT_TYPES = {
 
 const MAX_INCLUDE_DEPTH = 4
 
+function basename(path) {
+    const slash = path.lastIndexOf('/')
+    const file = slash >= 0 ? path.slice(slash + 1) : path
+    const dot = file.lastIndexOf('.')
+    return dot > 0 ? file.slice(0, dot) : file
+}
+
 function contentTypeFor(path) {
     const dot = path.lastIndexOf('.')
     const ext = dot >= 0 ? path.slice(dot + 1).toLowerCase() : ''
@@ -70,13 +77,19 @@ class IncludeReplacer {
             el.remove()
             return
         }
+        // Section instances pass id="…" to scope their data-edit keys.
+        // Default to the filename basename so simple includes still produce
+        // stable keys ( /sections/feature.html → id="feature" ).
         const path = src.replace(/^\/+/, '')
+        const id = el.getAttribute('id') || basename(path)
         const bytes = await readFile(this.env, path)
         if (!bytes) {
             el.replace(`<!-- include "${src}" not found -->`, { html: true })
             return
         }
         let text = new TextDecoder().decode(bytes)
+        // Substitute {{id}} placeholders in the loaded fragment.
+        if (text.includes('{{id}}')) text = text.replace(/\{\{id\}\}/g, id)
         if (this.depth > 0) text = await expandIncludes(this.env, text, this.depth - 1)
         const wrapped = `<!--include:start ${src}-->${text}<!--include:end-->`
         el.replace(wrapped, { html: true })
