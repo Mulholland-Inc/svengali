@@ -81,7 +81,8 @@ class IncludeReplacer {
         // Default to the filename basename so simple includes still produce
         // stable keys ( /sections/feature.html → id="feature" ).
         const path = src.replace(/^\/+/, '')
-        const id = el.getAttribute('id') || basename(path)
+        const explicitId = el.getAttribute('id')
+        const id = explicitId || basename(path)
         const bytes = await readFile(this.env, path)
         if (!bytes) {
             el.replace(`<!-- include "${src}" not found -->`, { html: true })
@@ -91,7 +92,10 @@ class IncludeReplacer {
         // Substitute {{id}} placeholders in the loaded fragment.
         if (text.includes('{{id}}')) text = text.replace(/\{\{id\}\}/g, id)
         if (this.depth > 0) text = await expandIncludes(this.env, text, this.depth - 1)
-        const wrapped = `<!--include:start ${src}-->${text}<!--include:end-->`
+        // Sentinel carries src + the explicit id (if any) so the editor can
+        // round-trip a list edit back into <include src="…" id="…"> tags.
+        const idMarker = explicitId ? ` id="${explicitId}"` : ''
+        const wrapped = `<!--include:start src="${src}"${idMarker}-->${text}<!--include:end-->`
         el.replace(wrapped, { html: true })
     }
 }

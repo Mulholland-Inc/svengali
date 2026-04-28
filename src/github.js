@@ -14,6 +14,7 @@ const CACHE_TTL_S = 60
 const CACHE_MAX_BYTES = 512 * 1024
 const CONFIG_KEY = 'app_config'
 const TOKEN_KEY = 'install_token'
+const TREE_TTL_S = 5 * 60
 
 // ── thin fetch helpers ──────────────────────────────────────────────────
 
@@ -192,15 +193,31 @@ export async function bustCache(env, paths) {
     await Promise.all(paths.map((p) => env.SITE_CACHE.delete(cacheKey(env, p))))
 }
 
-// Recursive list of every path on the configured branch.
+// Recursive list of every blob on the configured branch.
+// Returns [{path, sha}, ...] — sha is needed for single-file commits via the
+// Contents API. Cached in KV for 5 minutes; busted on commit.
+const treeCacheKey = (env) => `tree:${env.GITHUB_BRANCH}`
+
 export async function listTree(env) {
+    const cached = await env.SITE_CACHE.get(treeCacheKey(env), 'json')
+    if (cached) return cached
     const token = await getInstallationToken(env)
     const branch = await ghJson(token, repoPath(env, `/branches/${env.GITHUB_BRANCH}`))
     const tree = await ghJson(
         token,
         repoPath(env, `/git/trees/${branch.commit.commit.tree.sha}?recursive=1`),
     )
-    return tree.tree.filter((n) => n.type === 'blob').map((n) => n.path)
+    const blobs = tree.tree
+        .filter((n) => n.type === 'blob')
+        .map((n) => ({ path: n.path, sha: n.sha }))
+    await env.SITE_CACHE.put(treeCacheKey(env), JSON.stringify(blobs), {
+        expirationTtl: TREE_TTL_S,
+    })
+    return blobs
+}
+
+async function bustTreeCache(env) {
+    await env.SITE_CACHE.delete(treeCacheKey(env))
 }
 
 // ── Repo writes — single atomic commit via the Git Data API ─────────────
@@ -211,9 +228,52 @@ function bytesToBase64(bytes) {
     return btoa(s)
 }
 
+// Single-file commit via the Contents API — 2 round trips (read SHA + PUT)
+// vs. 6 for the Git Data API. We use the cached tree to skip the SHA fetch
+// when possible.
+async function commitOneFile(env, file, message, userToken) {
+    const tree = await listTree(env).catch(() => null)
+    const entry = tree?.find((b) => b.path === file.path)
+    let sha = entry?.sha
+    if (!sha) {
+        // File not in tree (new file) or tree fetch failed — try Contents API
+        // GET to find the SHA. 404 means the file doesn't exist yet (no sha).
+        const res = await gh(
+            userToken,
+            `${repoPath(env, '/contents/')}${encodeURI(file.path)}?ref=${env.GITHUB_BRANCH}`,
+        )
+        if (res.ok) sha = (await res.json()).sha
+    }
+
+    const bytes =
+        typeof file.bytes === 'string' ? new TextEncoder().encode(file.bytes) : file.bytes
+    const body = {
+        message,
+        content: bytesToBase64(bytes),
+        branch: env.GITHUB_BRANCH,
+    }
+    if (sha) body.sha = sha
+
+    const result = await ghJson(
+        userToken,
+        `${repoPath(env, '/contents/')}${encodeURI(file.path)}`,
+        { method: 'PUT', body: JSON.stringify(body) },
+    )
+    await Promise.all([
+        bustCache(env, [file.path]),
+        bustTreeCache(env),
+    ])
+    return { commitSha: result.commit.sha, url: result.commit.html_url }
+}
+
 export async function commitFiles(env, files, message, userToken) {
     if (!files.length) throw new Error('commitFiles: nothing to commit')
     if (!userToken) throw new Error('commitFiles: missing user token')
+
+    // Fast path: a single-file commit can use the Contents API.
+    if (files.length === 1) {
+        return commitOneFile(env, files[0], message, userToken)
+    }
 
     const ref = await ghJson(userToken, repoPath(env, `/git/ref/${branchRef(env)}`))
     const head = await ghJson(userToken, repoPath(env, `/git/commits/${ref.object.sha}`))
@@ -253,6 +313,9 @@ export async function commitFiles(env, files, message, userToken) {
         body: JSON.stringify({ sha: commit.sha, force: false }),
     })
 
-    await bustCache(env, files.map((f) => f.path))
+    await Promise.all([
+        bustCache(env, files.map((f) => f.path)),
+        bustTreeCache(env),
+    ])
     return { commitSha: commit.sha, url: commit.html_url }
 }

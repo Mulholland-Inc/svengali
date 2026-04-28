@@ -30,8 +30,12 @@ export const EDITOR_CLIENT = `
         var key = list.getAttribute('data-edit-list');
         if (!key) return;
         var html = list.innerHTML.replace(
-            /<!--include:start ([^>]+?)-->[\\s\\S]*?<!--include:end-->/g,
-            '<include src="$1"></include>',
+            /<!--include:start src="([^"]+)"(?: id="([^"]+)")?-->[\\s\\S]*?<!--include:end-->/g,
+            function (_, src, id) {
+                return id
+                    ? '<include src="' + src + '" id="' + id + '"></include>'
+                    : '<include src="' + src + '"></include>';
+            },
         );
         setDirty(key, 'list', html);
     }

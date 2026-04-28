@@ -53,9 +53,10 @@ class SetAttr {
 // Apply a set of edits (mix of innerHTML and attribute edits) to one file,
 // returning the new bytes. Edits whose key is not present in this file are
 // silently skipped — that lets the caller fan out the same edit list across
-// every HTML file in the repo for cross-page sync.
-export async function applyEditsInMemory(env, repoPath, edits) {
-    const bytes = await readFile(env, repoPath)
+// every HTML file in the repo for cross-page sync. If `bytes` are passed in
+// (from a previous read), skip the network round-trip.
+export async function applyEditsInMemory(env, repoPath, edits, bytes) {
+    if (!bytes) bytes = await readFile(env, repoPath)
     if (!bytes) throw new Error(`No file at ${repoPath}`)
     const res = new Response(bytes, { headers: { 'content-type': 'text/html; charset=utf-8' } })
     let rewriter = new HTMLRewriter()
@@ -74,22 +75,22 @@ export async function applyEditsInMemory(env, repoPath, edits) {
 // (key, attr) pairs. Used to fan out cross-page edits.
 async function filesContainingKeys(env, edits) {
     const all = await listTree(env)
-    const html = all.filter((p) => p.endsWith('.html') || p.endsWith('.htm'))
-    const matches = new Set()
+    const html = all.filter((b) => b.path.endsWith('.html') || b.path.endsWith('.htm'))
+    const matches = new Map() // path → bytes (reused later by applyEditsInMemory)
     const targets = edits.map((e) => {
         const key = escapeAttrValue(e.key)
         const attrName = !e.attr ? 'data-edit' : `data-edit-${e.attr}`
         return new RegExp(`${attrName}\\s*=\\s*"${key}"`)
     })
     await Promise.all(
-        html.map(async (path) => {
-            const bytes = await readFile(env, path)
+        html.map(async (b) => {
+            const bytes = await readFile(env, b.path)
             if (!bytes) return
             const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes)
-            if (targets.some((re) => re.test(text))) matches.add(path)
+            if (targets.some((re) => re.test(text))) matches.set(b.path, bytes)
         }),
     )
-    return [...matches]
+    return matches
 }
 
 async function startBrowserOAuth(c, next) {
@@ -231,16 +232,17 @@ export function mountEditRoutes(app) {
         }
 
         try {
-            const targetPaths = await filesContainingKeys(c.env, edits)
-            if (!targetPaths.length) return c.text('No matching keys found', 404)
+            const targetMap = await filesContainingKeys(c.env, edits)
+            if (!targetMap.size) return c.text('No matching keys found', 404)
 
             const files = await Promise.all(
-                targetPaths.map(async (path) => ({
+                [...targetMap.entries()].map(async ([path, bytes]) => ({
                     path,
-                    bytes: await applyEditsInMemory(c.env, path, edits),
+                    bytes: await applyEditsInMemory(c.env, path, edits, bytes),
                 })),
             )
 
+            const targetPaths = [...targetMap.keys()]
             const keys = edits
                 .map((e) => (e.attr ? `${e.key}@${e.attr}` : e.key))
                 .join(', ')
