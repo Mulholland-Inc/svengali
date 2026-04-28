@@ -24,10 +24,16 @@ export const EDITOR_CLIENT = `
 
     // Mark a [data-edit-list] container as dirty: capture its current innerHTML.
     // Called after any structural mutation (add/remove/move) on items inside.
+    // Re-collapse worker-injected include sentinels so the source file's
+    // <include> tags survive structural edits.
     function markListDirty(list) {
         var key = list.getAttribute('data-edit-list');
         if (!key) return;
-        setDirty(key, 'list', list.innerHTML);
+        var html = list.innerHTML.replace(
+            /<!--include:start ([^>]+?)-->[\\s\\S]*?<!--include:end-->/g,
+            '<include src="$1"></include>',
+        );
+        setDirty(key, 'list', html);
     }
 
     function listAncestor(node) {
@@ -169,6 +175,19 @@ export const EDITOR_CLIENT = `
     // surfaces every applicable edit (text, href, item ops, list ops).
     function collectOptions(target) {
         var out = [];
+
+        // Surface "Open link" first so navigation is one click away.
+        var anchor = target && target.closest && target.closest('a[href]');
+        if (anchor && !anchor.closest('#__edit-bar') && !anchor.closest('#__edit-menu')) {
+            (function (a) {
+                out.push({
+                    label: 'Open link',
+                    sub: a.getAttribute('href'),
+                    run: function () { location.href = a.getAttribute('href'); },
+                });
+            })(anchor);
+        }
+
         var node = target;
         while (node && node !== document) {
             if (node.nodeType === 1) {
@@ -344,6 +363,14 @@ export const EDITOR_CLIENT = `
     });
     document.addEventListener('click', function (e) {
         if (menu && !menu.contains(e.target)) closeMenu();
+        // Suppress link navigation while in edit mode — right-click is the
+        // way to interact. Modifier-clicks (Cmd, Ctrl, Shift, Alt, middle
+        // mouse) fall through so users can still open links in new tabs.
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+        var a = e.target && e.target.closest && e.target.closest('a[href]');
+        if (a && !a.closest('#__edit-bar') && !a.closest('#__edit-menu')) {
+            e.preventDefault();
+        }
     });
     document.addEventListener('keydown', function (e) {
         if (e.key === 'Escape') closeMenu();
@@ -357,68 +384,83 @@ export const EDITOR_CLIENT = `
         '<button id="__edit-save" type="button">Save</button>' +
         '<button id="__edit-logout" type="button" title="Log out">×</button>';
     var style = document.createElement('style');
-    // Hooks into the brand tokens defined on :root in /assets/branding.css
-    // (--color-fg, --color-bg, --color-accent, --font-body/display/mono, etc.)
+    // Brand-flat editor chrome — no rounded corners, 1px borders in
+    // --color-line, --space-* tokens for spacing, Alliance body for UI text,
+    // JetBrains Mono italic for keys (matches the .mono helper on the marketing site).
     style.textContent = [
         '#__edit-bar{',
         '  position:fixed;bottom:var(--space-5,24px);right:var(--space-5,24px);z-index:99999;',
-        '  display:flex;align-items:center;gap:var(--space-2,8px);',
-        '  background:var(--color-fg,#1a1a1a);color:var(--color-bg,#ebebeb);',
-        '  border-radius:8px;padding:var(--space-2,8px) var(--space-2,8px) var(--space-2,8px) var(--space-4,16px);',
+        '  display:flex;align-items:stretch;',
+        '  background:#fff;color:var(--color-fg,#1a1a1a);',
+        '  border:1px solid var(--color-line,rgba(160,160,160,0.5));',
         '  font-family:var(--font-body,system-ui,sans-serif);',
-        '  font-size:13px;font-weight:500;letter-spacing:0.02em;line-height:1;',
-        '  text-transform:uppercase;',
-        '  box-shadow:0 1px 2px rgba(26,26,26,0.04),0 8px 32px rgba(26,26,26,0.18);',
+        '  font-size:var(--text-sm,13px);line-height:1;',
         '}',
-        '#__edit-bar #__edit-count{opacity:0.45;font-variant-numeric:tabular-nums;letter-spacing:0.04em}',
-        '#__edit-bar.has-changes #__edit-count{opacity:1;color:var(--color-bg,#ebebeb)}',
+        '#__edit-bar #__edit-count{',
+        '  display:flex;align-items:center;padding:0 var(--space-4,16px);',
+        '  color:var(--color-muted,#a0a0a0);',
+        '  font-family:var(--font-mono,ui-monospace,Menlo,monospace);',
+        '  font-style:italic;font-variant-numeric:tabular-nums;',
+        '  border-right:1px solid var(--color-line,rgba(160,160,160,0.5));',
+        '}',
+        '#__edit-bar.has-changes #__edit-count{color:var(--color-fg,#1a1a1a)}',
         '#__edit-bar button{',
-        '  font:inherit;letter-spacing:inherit;text-transform:inherit;',
-        '  border:0;border-radius:6px;padding:8px 14px;cursor:pointer;',
-        '  transition:background 120ms cubic-bezier(0.2,0,0,1),color 120ms cubic-bezier(0.2,0,0,1);',
+        '  font:inherit;border:0;cursor:pointer;',
+        '  padding:var(--space-3,12px) var(--space-4,16px);',
+        '  border-right:1px solid var(--color-line,rgba(160,160,160,0.5));',
+        '  transition:background 120ms var(--easing,ease),color 120ms var(--easing,ease);',
         '}',
-        '#__edit-save{background:var(--color-bg,#ebebeb);color:var(--color-fg,#1a1a1a)}',
-        '#__edit-save:hover{background:var(--color-accent,#2244ff);color:#fff}',
-        '#__edit-bar.has-changes #__edit-save{background:var(--color-accent,#2244ff);color:#fff}',
-        '#__edit-bar.has-changes #__edit-save:hover{background:#3556ff}',
-        '#__edit-save[disabled]{opacity:0.45;cursor:default;background:var(--color-bg,#ebebeb)!important;color:var(--color-fg,#1a1a1a)!important}',
-        '#__edit-logout{background:transparent;color:var(--color-bg,#ebebeb);',
-        '  padding:6px 9px;font-size:16px;line-height:1;opacity:0.5;text-transform:none}',
-        '#__edit-logout:hover{opacity:1;background:rgba(235,235,235,0.1)}',
+        '#__edit-bar button:last-child{border-right:0}',
+        '#__edit-save{background:var(--color-fg,#1a1a1a);color:#fff;font-weight:500}',
+        '#__edit-save:hover{background:var(--color-accent,#2244ff)}',
+        '#__edit-bar.has-changes #__edit-save{background:var(--color-accent,#2244ff)}',
+        '#__edit-bar.has-changes #__edit-save:hover{filter:brightness(0.9)}',
+        '#__edit-save[disabled]{opacity:0.45;cursor:default;background:var(--color-fg,#1a1a1a)!important}',
+        '#__edit-logout{',
+        '  background:transparent;color:var(--color-muted,#a0a0a0);',
+        '  padding:0 var(--space-4,16px);font-size:var(--text-base,15px);',
+        '}',
+        '#__edit-logout:hover{color:var(--color-fg,#1a1a1a);background:var(--color-bg,#ebebeb)}',
 
-        '.__edit-tag{outline:1px dashed color-mix(in srgb,var(--color-accent,#2244ff) 30%,transparent);',
-        '  outline-offset:3px;cursor:context-menu;',
-        '  transition:outline-color 120ms cubic-bezier(0.2,0,0,1)}',
-        '.__edit-tag:hover{outline-color:var(--color-accent,#2244ff)}',
+        // Tagged elements: thin solid hairline that goes solid-fg on hover and
+        // accent on focus. Matches the marketing site\'s use of --color-line.
+        '.__edit-tag{outline:1px solid var(--color-line,rgba(160,160,160,0.5));',
+        '  outline-offset:2px;cursor:context-menu;',
+        '  transition:outline-color 120ms var(--easing,ease)}',
+        '.__edit-tag:hover{outline-color:var(--color-fg,#1a1a1a)}',
         '[contenteditable].__edit-tag:focus{',
-        '  outline:1.5px solid var(--color-accent,#2244ff);',
-        '  background:color-mix(in srgb,var(--color-accent,#2244ff) 5%,transparent);',
-        '  cursor:text}',
+        '  outline:1px solid var(--color-accent,#2244ff);',
+        '  background:#fff;cursor:text}',
 
         '#__edit-menu{',
         '  position:fixed;z-index:100000;',
         '  background:#fff;color:var(--color-fg,#1a1a1a);',
         '  border:1px solid var(--color-line,rgba(160,160,160,0.5));',
-        '  border-radius:8px;padding:var(--space-1,4px);',
-        '  box-shadow:0 1px 2px rgba(26,26,26,0.04),0 12px 32px rgba(26,26,26,0.12);',
-        '  min-width:220px;font-family:var(--font-body,system-ui,sans-serif);',
-        '  font-size:13px;display:flex;flex-direction:column}',
+        '  padding:0;min-width:240px;',
+        '  font-family:var(--font-body,system-ui,sans-serif);',
+        '  font-size:var(--text-sm,13px);display:flex;flex-direction:column;',
+        '}',
         '#__edit-menu button{',
         '  background:transparent;color:var(--color-fg,#1a1a1a);border:0;',
-        '  padding:8px var(--space-3,12px);text-align:left;font:inherit;cursor:pointer;',
-        '  border-radius:5px;display:flex;flex-direction:column;align-items:flex-start;',
-        '  gap:2px;line-height:1.25;',
-        '  transition:background 80ms cubic-bezier(0.2,0,0,1),color 80ms cubic-bezier(0.2,0,0,1)}',
+        '  padding:var(--space-3,12px) var(--space-4,16px);text-align:left;',
+        '  font:inherit;cursor:pointer;line-height:1.25;',
+        '  display:flex;flex-direction:column;align-items:flex-start;gap:var(--space-1,4px);',
+        '  border-bottom:1px solid var(--color-line,rgba(160,160,160,0.5));',
+        '  transition:background 80ms var(--easing,ease),color 80ms var(--easing,ease);',
+        '}',
+        '#__edit-menu button:last-child{border-bottom:0}',
         '#__edit-menu button em{',
-        '  font-style:normal;font-weight:400;font-size:11px;',
+        '  font-style:italic;font-weight:400;',
         '  color:var(--color-muted,#a0a0a0);',
         '  font-family:var(--font-mono,ui-monospace,Menlo,monospace);',
-        '  letter-spacing:-0.005em}',
+        '  font-size:var(--text-sm,13px);',
+        '}',
         '#__edit-menu button:hover{background:var(--color-bg,#ebebeb)}',
         '#__edit-menu button:hover em{color:var(--color-fg,#1a1a1a)}',
         '#__edit-menu button.danger{color:#b91c1c}',
-        '#__edit-menu button.danger:hover{background:rgba(185,28,28,0.06)}',
-        '#__edit-menu hr{border:0;border-top:1px solid var(--color-line,rgba(160,160,160,0.4));margin:4px 6px}',
+        '#__edit-menu button.danger:hover{background:#fff;color:#fff;background-color:#b91c1c}',
+        '#__edit-menu button.danger:hover em{color:rgba(255,255,255,0.7)}',
+        '#__edit-menu hr{display:none}', // we use border-bottom on each row instead
     ].join('\\n');
     document.head.appendChild(style);
     document.body.appendChild(bar);

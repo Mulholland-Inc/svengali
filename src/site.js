@@ -55,8 +55,10 @@ async function resolve(env, pathname) {
 }
 
 // Replace every <include src="…"></include> with the referenced file's
-// contents, recursively. Lets pages share chrome (nav, footer) by living
-// in a single source file.
+// contents, recursively. The expanded content is wrapped in HTML-comment
+// sentinels so the editor client can re-collapse it back to <include> tags
+// when saving structural changes — keeps the source file's include layer
+// intact even after add/move/remove ops on the parent list.
 class IncludeReplacer {
     constructor(env, depth) {
         this.env = env
@@ -76,7 +78,8 @@ class IncludeReplacer {
         }
         let text = new TextDecoder().decode(bytes)
         if (this.depth > 0) text = await expandIncludes(this.env, text, this.depth - 1)
-        el.replace(text, { html: true })
+        const wrapped = `<!--include:start ${src}-->${text}<!--include:end-->`
+        el.replace(wrapped, { html: true })
     }
 }
 

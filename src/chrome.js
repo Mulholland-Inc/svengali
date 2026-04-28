@@ -1,6 +1,6 @@
 // Shared HTML chrome for worker-rendered pages (login, /__setup, errors).
-// Inherits the brand stylesheet from the site (Alliance fonts, color tokens),
-// served from /assets/.
+// Inherits the brand stylesheet from the site (Alliance fonts, color tokens,
+// --space-* spacing). Flat, 1px hairline borders, sharp corners.
 
 export const escapeAttr = (s) =>
     String(s ?? '')
@@ -24,7 +24,6 @@ export function page(title, body, { variant = 'card' } = {}) {
     font-family:var(--font-body);
     font-size:var(--text-base);
     line-height:var(--leading-normal);
-    letter-spacing:var(--tracking-tight);
     color:var(--color-fg);
     background:var(--color-bg);
     display:grid;
@@ -35,15 +34,13 @@ export function page(title, body, { variant = 'card' } = {}) {
     width:min(440px,100%);
     background:#fff;
     border:var(--border-thin);
-    border-radius:14px;
-    padding:var(--space-7) var(--space-6) var(--space-6);
+    padding:var(--space-7) var(--space-6);
   }
   .logo{
     display:block;
-    width:32px;
+    width:36px;
     height:auto;
     margin-bottom:var(--space-5);
-    opacity:0.85;
   }
   h1{
     font-family:var(--font-display);
@@ -65,17 +62,15 @@ export function page(title, body, { variant = 'card' } = {}) {
   code{
     font-family:var(--font-mono);
     font-size:var(--text-sm);
-    background:var(--color-bg);
-    padding:2px 6px;
-    border-radius:4px;
+    color:var(--color-fg);
   }
   pre{
     font-family:var(--font-mono);
-    font-size:12px;
+    font-size:var(--text-sm);
     line-height:var(--leading-snug);
     background:var(--color-bg);
+    border:var(--border-thin);
     padding:var(--space-3);
-    border-radius:6px;
     overflow:auto;
     color:var(--color-muted);
     margin-top:var(--space-4);
@@ -86,23 +81,23 @@ export function page(title, body, { variant = 'card' } = {}) {
     gap:var(--space-2);
     background:var(--color-fg);
     color:#fff;
-    border:0;
-    border-radius:999px;
-    padding:12px 22px;
+    border:1px solid var(--color-fg);
+    padding:var(--space-3) var(--space-5);
     font:inherit;
     font-weight:500;
     cursor:pointer;
     text-decoration:none;
-    transition:background var(--duration-fast) var(--easing);
+    transition:background var(--duration-fast) var(--easing),border-color var(--duration-fast) var(--easing);
   }
-  .btn:hover{background:var(--color-accent);color:#fff}
-  .btn-secondary{background:transparent;color:var(--color-fg);border:1px solid var(--color-line)}
-  .btn-secondary:hover{background:var(--color-bg);color:var(--color-fg)}
+  .btn:hover{background:var(--color-accent);border-color:var(--color-accent);color:#fff}
+  .btn-secondary{background:transparent;color:var(--color-fg);border:var(--border-thin)}
+  .btn-secondary:hover{background:var(--color-bg);color:var(--color-fg);border-color:var(--color-line)}
   .actions{display:flex;gap:var(--space-3);margin-top:var(--space-5);flex-wrap:wrap}
   .field{position:relative;border-bottom:1px solid var(--color-fg);margin-bottom:var(--space-5)}
   .field input{
     width:100%;font:inherit;font-size:var(--text-lg);
-    padding:12px 40px 12px 0;border:0;background:transparent;outline:0;color:var(--color-fg);
+    padding:var(--space-3) 40px var(--space-3) 0;
+    border:0;background:transparent;outline:0;color:var(--color-fg);
   }
   .field input::placeholder{color:var(--color-muted)}
   .field button{
@@ -117,16 +112,19 @@ export function page(title, body, { variant = 'card' } = {}) {
     font-size:var(--text-sm);
     margin-bottom:var(--space-3);
     padding:var(--space-2) var(--space-3);
-    background:rgba(185,28,28,0.06);
-    border-radius:6px;
+    border:1px solid #b91c1c;
+    background:#fff;
   }
-  details{font-size:var(--text-sm);color:var(--color-muted);margin-top:var(--space-5)}
-  details summary{cursor:pointer;user-select:none}
+  details{font-size:var(--text-sm);color:var(--color-muted);margin-top:var(--space-6);padding-top:var(--space-4);border-top:var(--border-thin)}
+  details summary{cursor:pointer;user-select:none;font-family:var(--font-mono);font-style:italic}
   details form{margin-top:var(--space-3)}
-  details button{font:inherit;font-size:var(--text-sm);background:transparent;
-    color:#b91c1c;border:1px solid var(--color-line);border-radius:6px;
-    padding:6px 12px;cursor:pointer}
-  details button:hover{background:rgba(185,28,28,0.06)}
+  details button{
+    font:inherit;font-size:var(--text-sm);background:transparent;
+    color:#b91c1c;border:1px solid #b91c1c;
+    padding:var(--space-2) var(--space-3);cursor:pointer;
+    transition:background var(--duration-fast) var(--easing),color var(--duration-fast) var(--easing);
+  }
+  details button:hover{background:#b91c1c;color:#fff}
   ${variant === 'plain' ? 'main{background:transparent;border:0;padding:0}' : ''}
 </style>
 </head><body><main>${body}</main></body></html>`
